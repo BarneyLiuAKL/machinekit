@@ -78,7 +78,7 @@
 #include "rtapi_app.h"
 #include "rtapi_string.h"
 #include "rtapi_math.h"
-
+#include "pruss.h"
 #include "hal.h"
 
 #include "hal/drivers/hal_pru_generic/hal_pru_generic.h"
@@ -108,7 +108,9 @@ void hpg_stepgen_read(hal_pru_generic_t *hpg, long l_period_ns) {
         s64 acc_delta;
 
         // "atomic" read of accumulator and position register from PRU
-        y = * (s64 *) ((u32) hpg->pru_data + hpg->stepgen.instance[i].task.addr + (u32) offsetof(PRU_task_stepdir_t, accum));
+	PRU_task_stepdir_t *addr = (s64 *) ((u32) hpg->pru_data + hpg->stepgen.instance[i].task.addr + (u32) offsetof(PRU_task_stepdir_t, accum));
+        y = pruss_read(addr);
+
         do {
             x = y;
             y = * (s64 *) ((u32) hpg->pru_data + hpg->stepgen.instance[i].task.addr + (u32) offsetof(PRU_task_stepdir_t, accum));
@@ -675,11 +677,18 @@ void hpg_stepgen_update(hal_pru_generic_t *hpg, long l_period_ns) {
             hpg->stepgen.instance[i].pru.stepinv    =                 hpg->stepgen.instance[i].hal.param.stepinv;
 
             // Send new value(s) to the PRU
-            pru->dirsetup   = hpg->stepgen.instance[i].pru.dirsetup;
+            /*
+	    pru->dirsetup   = hpg->stepgen.instance[i].pru.dirsetup;
             pru->dirhold    = hpg->stepgen.instance[i].pru.dirhold;
             pru->steplen    = hpg->stepgen.instance[i].pru.steplen;
             pru->stepspace  = hpg->stepgen.instance[i].pru.stepspace;
             pru->stepinv    = hpg->stepgen.instance[i].pru.stepinv;
+            */
+	    pruss_write(hpg->stepgen.instance[i].pru.dirsetup, pru->dirsetup);
+	    pruss_write(hpg->stepgen.instance[i].pru.dirhold, pru->dirhold);
+	    pruss_write(hpg->stepgen.instance[i].pru.steplen, pru->steplen);
+	    pruss_write(hpg->stepgen.instance[i].pru.stepspace, pru->stepspace);
+	    pruss_write(hpg->stepgen.instance[i].pru.stepinv, pru->stepinv);
 
             // Stash values written
             hpg->stepgen.instance[i].written_dirsetup  = hpg->stepgen.instance[i].hal.param.dirsetup;
@@ -724,6 +733,7 @@ void hpg_stepgen_force_write(hal_pru_generic_t *hpg) {
         hpg->stepgen.instance[i].pru.reserved[1]    = 0;
 
         PRU_task_stepdir_t *pru = (PRU_task_stepdir_t *) ((u32) hpg->pru_data + (u32) hpg->stepgen.instance[i].task.addr);
-        *pru = hpg->stepgen.instance[i].pru;
+        //*pru = hpg->stepgen.instance[i].pru;
+	pruss_write(hpg->stepgen.instance[i].pru, pru);
     }
 }

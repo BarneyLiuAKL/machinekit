@@ -72,10 +72,11 @@
 #include "hal.h"            /* HAL public API decls */
 #include <pthread.h>
 
-#include "prussdrv.h"           // UIO interface to uio_pruss
+//#include "prussdrv.h"           // UIO interface to uio_pruss
 //#include "pru.h"                // PRU-related defines
-#include "pruss_intc_mapping.h"
+//#include "pruss_intc_mapping.h"
 
+#include "pruss.h"		//New C library which talks to kernel driver
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -99,10 +100,11 @@ MODULE_LICENSE("GPL");
 // Default PRU code to load (prefixed by EMC_RTLIB_DIR)
 // Fixme: This should probably be compiled in, via a header file generated
 //        by pasm -PRUv2 -c myprucode.p
-#define  DEFAULT_CODE  "stepgen.bin"
+//#define  DEFAULT_CODE  "stepgen.bin"		Firmware is written using remoteproc, placed in /lib/firmware
 
 // The kernel module required to talk to the PRU
-#define UIO_PRUSS  "uio_pruss"
+//#define UIO_PRUSS  "uio_pruss"		new kernel driver will perform functions of uio_pruss i.e provide pru
+						// memory address and size
 
 // Default pin to use for PRU modules...use a pin that does not leave the PRU
 #define PRU_DEFAULT_PIN 17
@@ -153,7 +155,7 @@ static int comp_id;     /* component ID */
 static const char *modname = "hal_pru_generic";
 
 // if filename doesnt exist, prefix this path:
-char *fw_path = "/lib/firmware/pru/";       
+//char *fw_path = "/lib/firmware/pru/";       
 
 // shared with PRU
 static unsigned long *pru_data_ram;     // points to PRU data RAM
@@ -394,26 +396,26 @@ int pru_init(int pru, char *filename, int disabled, hal_pru_generic_t *hpg) {
     if ((retval = assure_module_loaded(UIO_PRUSS)))
     return retval;
 
-rtapi_print("prussdrv_init\n");
+rtapi_print("pruss_init\n");
     // Allocate and initialize memory
-    prussdrv_init ();
+    pruss_init ();
 
     // opens an event out and initializes memory mapping
-rtapi_print("prussdrv_open\n");
-    if (prussdrv_open(event > -1 ? event : PRU_EVTOUT_0) < 0)
+rtapi_print("pruss_open\n");
+    if (pruss_open(event > -1 ? event : PRU_EVTOUT_0) < 0)
     return -1;
 
     // expose the driver data, filled in by prussdrv_open
     pruss = &prussdrv;
 
     // Map PRU's INTC
-rtapi_print("prussdrv_pruintc_init\n");
-    if (prussdrv_pruintc_init(&pruss_intc_initdata) < 0)
-    return -1;
+//rtapi_print("prussdrv_pruintc_init\n");
+  //  if (prussdrv_pruintc_init(&pruss_intc_initdata) < 0)
+   // return -1;
 
     // Maps the PRU DRAM memory to input pointer
-rtapi_print("prussdrv_map_prumem\n");
-    if (prussdrv_map_prumem(pru ? PRUSS0_PRU1_DATARAM : PRUSS0_PRU0_DATARAM,
+rtapi_print("pruss_map_prumem\n");
+    if (pruss_map_prumem(pru ? PRUSS0_PRU1_DATARAM : PRUSS0_PRU0_DATARAM,
             (void **) &pru_data_ram) < 0)
     return -1;
 
@@ -421,7 +423,7 @@ rtapi_print("PRU data ram mapped\n");
     rtapi_print_msg(RTAPI_MSG_DBG, "%s: PRU data ram mapped at %p\n",
             modname, pru_data_ram);
 
-    hpg->pru_data = (u32 *) pru_data_ram;
+    hpg->pru_data = pruss_read(pru_data_ram);
 
     // Zero PRU data memory
     for (i = 0; i < 8192/4; i++) {
@@ -439,12 +441,13 @@ rtapi_print("PRU data ram mapped\n");
     hpg->config.pru_period = pru_period;
 
     PRU_statics_t *stat = (PRU_statics_t *) ((u32) hpg->pru_data + (u32) hpg->pru_stat_addr);
-    *stat = hpg->pru_stat;
-
+    //*stat = hpg->pru_stat;
+    pruss_write(hpg->pru_stat,stat);   		//pruss_write(data,add)
     return 0;
 }
 
-int setup_pru(int pru, char *filename, int disabled, hal_pru_generic_t *hpg) {
+/*int setup_pru(int pru, char *filename, int disabled, hal_pru_generic_t *hpg) {	//firmware and execution handled by remoteproc
+											//at time of probing driver.
     
     int retval;
 
@@ -485,7 +488,7 @@ int setup_pru(int pru, char *filename, int disabled, hal_pru_generic_t *hpg) {
     }
     retval =  prussdrv_exec_program (pru, pru_binpath, disabled);
     return retval;
-}
+}*/
 
 void pru_task_add(hal_pru_generic_t *hpg, pru_task_t *task) {
 
@@ -521,8 +524,8 @@ static void *pruevent_thread(void *arg)
 void pru_shutdown(int pru)
 {
     // Disable PRU and close memory mappings
-    prussdrv_pru_disable(pru);
-    prussdrv_exit (); // also joins event listen thread
+    pruss_pru_disable(pru);
+    pruss_exit (); // also joins event listen thread
 }
 
 int hpg_wait_init(hal_pru_generic_t *hpg) {
@@ -549,10 +552,12 @@ void hpg_wait_force_write(hal_pru_generic_t *hpg) {
     hpg->wait.pru.task.hdr.addr = hpg->wait.task.next;
 
     PRU_task_wait_t *pru = (PRU_task_wait_t *) ((u32) hpg->pru_data + (u32) hpg->wait.task.addr);
-    *pru = hpg->wait.pru;
+    //*pru = hpg->wait.pru;
+    pruss_write(hpg->wait.pru,pru);
 
     PRU_statics_t *stat = (PRU_statics_t *) ((u32) hpg->pru_data + (u32) hpg->pru_stat_addr);
-    *stat = hpg->pru_stat;
+    //*stat = hpg->pru_stat;
+    pruss_write(hpg->pru_stat,stat);
 }
 
 void hpg_wait_update(hal_pru_generic_t *hpg) {
@@ -560,7 +565,8 @@ void hpg_wait_update(hal_pru_generic_t *hpg) {
         hpg->wait.pru.task.hdr.dataX = hpg->hal.param.pru_busy_pin;
 
     PRU_task_wait_t *pru = (PRU_task_wait_t *) ((u32) hpg->pru_data + (u32) hpg->wait.task.addr);
-    *pru = hpg->wait.pru;
+    //*pru = hpg->wait.pru;
+    pruss_write(hpg->wait.pru,pru);
 }
 
 int fixup_pin(u32 hal_pin) {
